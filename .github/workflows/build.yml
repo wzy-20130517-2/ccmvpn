@@ -16,7 +16,12 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
+      # runner 自带 Android SDK，不用额外 action（那个偶尔会 404）
+      - name: 确认 SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls $ANDROID_HOME 2>/dev/null | head
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
 
       - name: Gradle cache
         uses: actions/cache@v4
