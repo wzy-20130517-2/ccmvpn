@@ -95,13 +95,13 @@ class MainActivity : ComponentActivity() {
             } else warmup = 0
         }
 
-        // 进入时查一次出口 IP；连上后再查一次
-        LaunchedEffect(on) {
-            if (on) {
-                ipLoading = true
-                ip = fetchIp()
-                ipLoading = false
-            }
+        // 用计数器当 key：连上状态变化、或用户点刷新，都会重查一次
+        var refreshTick by remember { mutableStateOf(0) }
+        LaunchedEffect(on, refreshTick) {
+            if (!on) { ip = null; return@LaunchedEffect }
+            ipLoading = true
+            ip = fetchIp()
+            ipLoading = false
         }
 
         Box(
@@ -164,20 +164,9 @@ class MainActivity : ComponentActivity() {
 
                 InfoCard(
                     ip = ip, loading = ipLoading,
-                    onRefresh = {
-                        ipLoading = true
-                        ip = null
-                    }
+                    onRefresh = { refreshTick++ }
                 )
                 Spacer(Modifier.height(24.dp))
-            }
-        }
-
-        // 刷新 IP 的副作用
-        LaunchedEffect(ipLoading, ip == null) {
-            if (ipLoading && ip == null) {
-                ip = fetchIp()
-                ipLoading = false
             }
         }
     }
