@@ -31,11 +31,20 @@ jobs:
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*') }}
 
-      - name: Build
+      # runner 预装的 gradle 是 9.x，AGP 8.x 用不了（Gradle 9.6 删了 AGP 依赖的内部 API）。
+      # 直接下 8.13 的 wrapper，别用系统 gradle 生成 —— 生成时会用错版本。
+      - name: Gradle wrapper
         run: |
-          chmod +x gradlew 2>/dev/null || true
-          if [ ! -f gradlew ]; then gradle wrapper --gradle-version 8.13; fi
-          ./gradlew :app:assembleDebug --no-daemon --stacktrace
+          set -e
+          mkdir -p gradle/wrapper
+          curl -fsSL -o gradle/wrapper/gradle-wrapper.jar \
+            https://raw.githubusercontent.com/gradle/gradle/v8.9.0/gradle/wrapper/gradle-wrapper.jar
+          curl -fsSL -o gradlew \
+            https://raw.githubusercontent.com/gradle/gradle/v8.9.0/gradlew
+          chmod +x gradlew
+
+      - name: Build
+        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
 
       - uses: actions/upload-artifact@v4
         with:

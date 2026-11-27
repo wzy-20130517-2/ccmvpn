@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.ccm.vpn"
-    compileSdk = 36
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.ccm.vpn"
@@ -53,6 +53,6 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     // hev-socks5-tunnel：tun2socks，把 VpnService 的 TUN 流量送进 SOCKS5
-    implementation("com.zaneschepke:hevtunnel:1.0.1")
+    implementation("com.zaneschepke:hevtunnel:1.0.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 }
