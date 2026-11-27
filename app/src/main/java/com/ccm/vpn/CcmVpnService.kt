@@ -30,6 +30,8 @@ class CcmVpnService : VpnService() {
         private const val TAG = "CCMVPN"
         private const val CH_ID = "ccmvpn"
         private const val NOTIF_ID = 1001
+        // TUN 自己的地址，必须和 hev.yml 里的 tunnel.ipv4 一致
+        private const val HEV_TUN_ADDR = "198.18.0.1"
         const val ACTION_STATE = "com.ccm.vpn.STATE"
         const val ACTION_START = "com.ccm.vpn.START"
         const val ACTION_STOP = "com.ccm.vpn.STOP"
@@ -174,8 +176,13 @@ class CcmVpnService : VpnService() {
         val b = Builder()
             .setSession("CCMVPN")
             .setMtu(1500)
-            .addAddress("10.8.0.2", 32)
-            .addDnsServer("10.8.0.1")     // 交给 hev 自己处理，别设公网 DNS 否则解析绕不出去
+            .addAddress(HEV_TUN_ADDR, 32)
+            // DNS 必须走公共服务器：hev 会把发往它的 UDP 请求
+            // 通过 SOCKS5 的 UDP 转发出去（配置里 socks5.udp: 'udp'）。
+            // 之前写 10.8.0.1 是个没人监听的地址，所有解析都超时，
+            // 现象就是「连上了但打不开任何网页」。
+            .addDnsServer("1.1.1.1")
+            .addDnsServer("8.8.8.8")
             .setBlocking(true)
 
         when (mode) {
@@ -212,17 +219,23 @@ class CcmVpnService : VpnService() {
         tunnel = pfd
 
         // hev-socks5-tunnel 的配置：YAML，指向我们刚拉起来的本地 SOCKS5
+        // hev 的配置。几个容易踩的点：
+        //   ipv4 必须和 Builder.addAddress 里的地址一致，否则 tun2socks 认不出自己的口，
+        //   包进来就被丢弃 —— 现象是「显示已连接，但所有应用都不通」。
+        //   task-stack-size 官方默认 86016 字节，贪小（20480）会在高负载时栈溢出。
+        val tunAddr = HEV_TUN_ADDR
         val cfg = File(filesDir, "hev.yml")
         cfg.writeText(
             """
             tunnel:
               mtu: 1500
+              ipv4: $tunAddr
             socks5:
               port: 1080
               address: 127.0.0.1
               udp: 'udp'
             misc:
-              task-stack-size: 20480
+              task-stack-size: 86016
               connect-timeout: 12000
               log-level: warn
               log-file: ${File(filesDir, "hev.log").absolutePath}

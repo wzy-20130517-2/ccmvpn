@@ -112,7 +112,12 @@ class MainActivity : ComponentActivity() {
         var refreshTick by remember { mutableStateOf(0) }
         LaunchedEffect(on, refreshTick) {
             ipLoading = true
-            val r = fetchIpInfo()
+            // 全局/分应用模式：VpnService 已接管，直接发请求就是走隧道，
+            // 不需要额外代理（设了反而会因为 App 被 disallow 而绕不出去）。
+            // 端口模式：VpnService 没建，本机 socks 监听的是自定义端口，
+            // 必须显式走它才不会退回本机出口。
+            val proxy = if (on && ModeStore.mode(ctx) == Mode.PORT) ModeStore.port(ctx) else null
+            val r = fetchIpInfo(proxy)
             ip = r?.first
             loc = r?.second
             ipLoading = false
@@ -395,11 +400,19 @@ class MainActivity : ComponentActivity() {
  * ipinfo 返回 JSON（ip/city/region/country），一次请求两样都拿到，省一次往返。
  * 失败返回 null，UI 显示「—」。
  */
-private suspend fun fetchIpInfo(): Pair<String, String>? = withContext(Dispatchers.IO) {
+private suspend fun fetchIpInfo(proxyPort: Int? = null): Pair<String, String>? = withContext(Dispatchers.IO) {
     try {
         val c = URL("https://ipinfo.io/json").openConnection() as HttpURLConnection
         c.connectTimeout = 8000
         c.readTimeout = 8000
+        // 查的必须是「经过隧道的出口」，否则显示的是本机宽带 IP（景德镇），
+        // 用户看到的就和实际流量对不上。所以走本地 SOCKS5 去查：
+        //   - 连接已建立：127.0.0.1:1080 是 cloudflared 映射过来的远端出口
+        //   - 未连接：不设代理，显示本机真实出口
+        if (proxyPort != null) {
+            c.setProxy(java.net.Proxy(java.net.Proxy.Type.SOCKS,
+                java.net.InetSocketAddress("127.0.0.1", proxyPort)))
+        }
         val body = c.inputStream.bufferedReader().readText()
         val o = org.json.JSONObject(body)
         val ip = o.optString("ip").ifBlank { return@withContext null }
