@@ -42,6 +42,7 @@ class CcmVpnService : VpnService() {
 
     private var tunnel: ParcelFileDescriptor? = null
     private var localSocks: LocalSocks? = null
+    private var lastError: String = ""
     private var cfProc: Process? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var running = false
@@ -78,7 +79,7 @@ class CcmVpnService : VpnService() {
                 val ok = waitSocks(30_000)
                 if (!ok) {
                     broadcastState("失败", "SOCKS5 没有就绪")
-                    stopVpn(); return@launch
+                    stopVpn(keepState = true); return@launch
                 }
                 broadcastState("预热", "SOCKS5 就绪")
 
@@ -88,7 +89,7 @@ class CcmVpnService : VpnService() {
                     val ls = LocalSocks(p)
                     if (!ls.start()) {
                         broadcastState("失败", "端口 $p 起不来")
-                        stopVpn(); return@launch
+                        stopVpn(keepState = true); return@launch
                     }
                     localSocks = ls
                     broadcastState("已连接", "代理已开 127.0.0.1:$p")
@@ -98,8 +99,8 @@ class CcmVpnService : VpnService() {
                 }
 
                 if (!establishTun()) {
-                    broadcastState("失败", "TUN 建立失败")
-                    stopVpn(); return@launch
+                    broadcastState("失败", "TUN 建立失败（授权被拒或 so 没加载）")
+                    stopVpn(keepState = true); return@launch
                 }
 
                 val m = ModeStore.mode(this@CcmVpnService)
@@ -113,8 +114,8 @@ class CcmVpnService : VpnService() {
                 monitor()
             } catch (e: Exception) {
                 Log.e(TAG, "启动失败", e)
-                broadcastState("失败", e.message ?: "未知错误")
-                stopVpn()
+                broadcastState("失败", "${e.javaClass.simpleName}: ${e.message}")
+                stopVpn(keepState = true)
             }
         }
     }
@@ -202,7 +203,12 @@ class CcmVpnService : VpnService() {
         // 本 App 自己的流量必须绕开隧道，否则 cloudflared 走隧道会成环
         try { b.addDisallowedApplication(packageName) } catch (_: Exception) {}
 
-        val pfd = b.establish() ?: return false
+        val pfd = try {
+            b.establish()
+        } catch (e: Exception) {
+            lastError = "establish: ${e.javaClass.simpleName} ${e.message}"
+            null
+        } ?: return false
         tunnel = pfd
 
         // hev-socks5-tunnel 的配置：YAML，指向我们刚拉起来的本地 SOCKS5
@@ -223,12 +229,10 @@ class CcmVpnService : VpnService() {
             """.trimIndent()
         )
         return try {
-            // 返回类型是 void，起没起来只能靠后面的连通性判断
             org.amnezia.awg.hevtunnel.TProxyService.TProxyStartService(cfg.absolutePath, pfd.fd)
-            Log.i(TAG, "tun2socks started")
             true
         } catch (e: Throwable) {
-            Log.e(TAG, "tun2socks 起不来", e)
+            lastError = "tun2socks: ${e.javaClass.simpleName} ${e.message}"
             false
         }
     }
@@ -269,7 +273,7 @@ class CcmVpnService : VpnService() {
         sendBroadcast(i)
     }
 
-    private fun stopVpn() {
+    private fun stopVpn(keepState: Boolean = false) {
         running = false
         try { org.amnezia.awg.hevtunnel.TProxyService.TProxyStopService() } catch (_: Exception) {}
         tunnel = null
@@ -278,7 +282,9 @@ class CcmVpnService : VpnService() {
         scope.coroutineContext.cancelChildren()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
-        broadcastState("未连接", "")
+        // 失败路径要把「失败」留在界面上，不能随手盖成「未连接」——
+        // 否则用户只看到它自己关了，不知道原因。
+        if (!keepState) broadcastState("未连接", "")
     }
 
     override fun onDestroy() {
