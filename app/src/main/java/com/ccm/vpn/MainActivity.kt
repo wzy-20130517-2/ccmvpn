@@ -402,17 +402,16 @@ class MainActivity : ComponentActivity() {
  */
 private suspend fun fetchIpInfo(proxyPort: Int? = null): Pair<String, String>? = withContext(Dispatchers.IO) {
     try {
-        val c = URL("https://ipinfo.io/json").openConnection() as HttpURLConnection
-        c.connectTimeout = 8000
-        c.readTimeout = 8000
-        // 查的必须是「经过隧道的出口」，否则显示的是本机宽带 IP（景德镇），
-        // 用户看到的就和实际流量对不上。所以走本地 SOCKS5 去查：
-        //   - 连接已建立：127.0.0.1:1080 是 cloudflared 映射过来的远端出口
-        //   - 未连接：不设代理，显示本机真实出口
+        // 先在 URLConnection 上调 setProxy（Kotlin 把 setProxy 当 URLConnection 的方法，
+        // 先 as HttpURLConnection 的话编译器就找不到了），再赋给 HttpURLConnection 用。
+        val uc = URL("https://ipinfo.io/json").openConnection()
         if (proxyPort != null) {
-            c.setProxy(java.net.Proxy(java.net.Proxy.Type.SOCKS,
+            uc.setProxy(java.net.Proxy(java.net.Proxy.Type.SOCKS,
                 java.net.InetSocketAddress("127.0.0.1", proxyPort)))
         }
+        val c = uc as HttpURLConnection
+        c.connectTimeout = 8000
+        c.readTimeout = 8000
         val body = c.inputStream.bufferedReader().readText()
         val o = org.json.JSONObject(body)
         val ip = o.optString("ip").ifBlank { return@withContext null }
