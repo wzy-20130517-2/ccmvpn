@@ -34,7 +34,7 @@ jobs:
       - name: Build
         run: |
           chmod +x gradlew 2>/dev/null || true
-          if [ ! -f gradlew ]; then gradle wrapper --gradle-version 8.11.1; fi
+          if [ ! -f gradlew ]; then gradle wrapper --gradle-version 8.13; fi
           ./gradlew :app:assembleDebug --no-daemon --stacktrace
 
       - uses: actions/upload-artifact@v4
