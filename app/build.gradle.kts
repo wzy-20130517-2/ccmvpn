@@ -51,6 +51,7 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material:material-icons-extended")
     // hev-socks5-tunnel：tun2socks，把 VpnService 的 TUN 流量送进 SOCKS5
     implementation("com.zaneschepke:hevtunnel:1.0.0")

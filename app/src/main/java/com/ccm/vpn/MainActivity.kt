@@ -77,11 +77,20 @@ class MainActivity : ComponentActivity() {
     private fun Screen(state: String, detail: String) {
         val ctx = LocalContext.current
         var ip by remember { mutableStateOf<String?>(null) }
-        var ipLoading by remember { mutableStateOf(false) }
+        var loc by remember { mutableStateOf<String?>(null) }
+        var ipLoading by remember { mutableStateOf(true) }
         var warmup by remember { mutableStateOf(0) }
 
         val on = state == "已连接"
         val warming = state == "预热"
+
+        // 模式：连上后就不让改（改了也不生效，避免界面和实际不一致）
+        var mode by remember { mutableStateOf(ModeStore.mode(ctx)) }
+        var portText by remember { mutableStateOf(ModeStore.port(ctx).toString()) }
+        fun saveMode(m: Mode) {
+            mode = m
+            ModeStore.setMode(ctx, m)
+        }
 
         val permLauncher = rememberLauncherForActivityResult(
             ActivityResultContracts.StartActivityForResult()
@@ -97,12 +106,14 @@ class MainActivity : ComponentActivity() {
             } else warmup = 0
         }
 
-        // 用计数器当 key：连上状态变化、或用户点刷新，都会重查一次
+        // 一进界面就查（不依赖连接状态），连上/断开、点刷新都会重查。
+        // 查的是「此刻设备真正的出口」：没连时是宽带/流量 IP，连上是 Kaggle 的 IP。
         var refreshTick by remember { mutableStateOf(0) }
         LaunchedEffect(on, refreshTick) {
-            if (!on) { ip = null; return@LaunchedEffect }
             ipLoading = true
-            ip = fetchIp()
+            val r = fetchIpInfo()
+            ip = r?.first
+            loc = r?.second
             ipLoading = false
         }
 
@@ -162,10 +173,22 @@ class MainActivity : ComponentActivity() {
                         fontFamily = FontFamily.Monospace)
                 }
 
+                Spacer(Modifier.height(20.dp))
+                ModeSelector(
+                    mode = mode,
+                    enabled = !on && !warming,
+                    portText = portText,
+                    onMode = { saveMode(it) },
+                    onPort = { t ->
+                        portText = t.filter { c -> c.isDigit() }.take(5)
+                        portText.toIntOrNull()?.let { if (it in 1..65535) ModeStore.setPort(ctx, it) }
+                    }
+                )
+
                 Spacer(Modifier.weight(1f))
 
                 InfoCard(
-                    ip = ip, loading = ipLoading,
+                    ip = ip, loc = loc, loading = ipLoading,
                     onRefresh = { refreshTick++ }
                 )
                 Spacer(Modifier.height(24.dp))
@@ -217,8 +240,84 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+
     @Composable
-    private fun InfoCard(ip: String?, loading: Boolean, onRefresh: () -> Unit) {
+    private fun ModeSelector(
+        mode: Mode, enabled: Boolean, portText: String,
+        onMode: (Mode) -> Unit, onPort: (String) -> Unit
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                ModeChip("全局", mode == Mode.GLOBAL && enabled, enabled) { onMode(Mode.GLOBAL) }
+                ModeChip("分应用", mode == Mode.APPS && enabled, enabled) { onMode(Mode.APPS) }
+                ModeChip("端口", mode == Mode.PORT && enabled, enabled) { onMode(Mode.PORT) }
+            }
+
+            if (mode == Mode.PORT) {
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("监听端口", fontSize = 12.sp, color = Color(0xFF8B93A7))
+                    Spacer(Modifier.width(10.dp))
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color.White.copy(alpha = 0.06f),
+                        modifier = Modifier.width(96.dp)
+                    ) {
+                        androidx.compose.foundation.text.BasicTextField(
+                            value = portText,
+                            onValueChange = { if (enabled) onPort(it) },
+                            enabled = enabled,
+                            singleLine = true,
+                            textStyle = androidx.compose.ui.text.TextStyle(
+                                color = Color.White, fontSize = 14.sp,
+                                fontFamily = FontFamily.Monospace
+                            ),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text("127.0.0.1", fontSize = 11.sp, color = Color(0xFF4B5563),
+                        fontFamily = FontFamily.Monospace)
+                }
+            }
+            if (mode == Mode.APPS) {
+                Spacer(Modifier.height(8.dp))
+                Text("已选 ${(ModeStore.apps(ctx) ?: emptySet()).size} 个应用，点这里调整",
+                    fontSize = 12.sp, color = Color(0xFF60A5FA))
+            }
+        }
+    }
+
+    @Composable
+    private fun ModeChip(label: String, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = if (selected) Color(0xFF4ADE80).copy(alpha = 0.18f)
+                    else Color.White.copy(alpha = 0.05f),
+            onClick = { if (enabled) onClick() },
+            enabled = enabled,
+            modifier = Modifier.weight(1f)
+        ) {
+            Box(Modifier.padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
+                Text(
+                    label,
+                    fontSize = 13.sp,
+                    color = when {
+                        !enabled -> Color(0xFF4B5563)
+                        selected -> Color(0xFF4ADE80)
+                        else -> Color(0xFF8B93A7)
+                    },
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+                )
+            }
+        }
+    }
+
+    @Composable
+    private fun InfoCard(ip: String?, loc: String?, loading: Boolean, onRefresh: () -> Unit) {
         Surface(
             shape = RoundedCornerShape(20.dp),
             color = Color.White.copy(alpha = 0.05f),
@@ -227,17 +326,33 @@ class MainActivity : ComponentActivity() {
             Column(Modifier.padding(20.dp)) {
                 Text("当前 IP", fontSize = 12.sp, color = Color(0xFF8B93A7))
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    when {
-                        loading -> "查询中…"
-                        ip == null -> "—"
-                        else -> ip
-                    },
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White,
-                    fontFamily = FontFamily.Monospace
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        when {
+                            loading -> "查询中…"
+                            ip == null -> "—"
+                            else -> ip!!
+                        },
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    if (!loc.isNullOrBlank()) {
+                        Spacer(Modifier.width(10.dp))
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color.White.copy(alpha = 0.08f)
+                        ) {
+                            Text(
+                                loc!!,
+                                fontSize = 12.sp,
+                                color = Color(0xFF9CA3AF),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+                }
                 Spacer(Modifier.height(14.dp))
                 TextButton(onClick = onRefresh, contentPadding = PaddingValues(0.dp)) {
                     Text("刷新", fontSize = 13.sp, color = Color(0xFF60A5FA))
@@ -257,14 +372,25 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/** 直接问 ipinfo；失败返回 null，UI 显示 — */
-private suspend fun fetchIp(): String? = withContext(Dispatchers.IO) {
+/**
+ * 查出口 IP 和地理位置。
+ * ipinfo 返回 JSON（ip/city/region/country），一次请求两样都拿到，省一次往返。
+ * 失败返回 null，UI 显示「—」。
+ */
+private suspend fun fetchIpInfo(): Pair<String, String>? = withContext(Dispatchers.IO) {
     try {
-        val c = URL("https://ipinfo.io/ip").openConnection() as HttpURLConnection
+        val c = URL("https://ipinfo.io/json").openConnection() as HttpURLConnection
         c.connectTimeout = 8000
         c.readTimeout = 8000
-        c.requestMethod = "GET"
-        c.inputStream.bufferedReader().readText().trim().takeIf { it.isNotEmpty() }
+        val body = c.inputStream.bufferedReader().readText()
+        val o = org.json.JSONObject(body)
+        val ip = o.optString("ip").ifBlank { return@withContext null }
+        val city = o.optString("city")
+        val region = o.optString("region")
+        val country = o.optString("country")
+        // 「杭州, 浙江, CN」这种，缺哪个跳过哪个
+        val place = listOf(city, region, country).filter { it.isNotBlank() }.joinToString(", ")
+        ip to place
     } catch (_: Exception) {
         null
     }

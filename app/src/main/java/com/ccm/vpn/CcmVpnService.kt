@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -40,6 +41,7 @@ class CcmVpnService : VpnService() {
     }
 
     private var tunnel: ParcelFileDescriptor? = null
+    private var localSocks: LocalSocks? = null
     private var cfProc: Process? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var running = false
@@ -54,7 +56,15 @@ class CcmVpnService : VpnService() {
 
     private fun startVpn() {
         running = true
-        startForeground(NOTIF_ID, buildNotification("预热中…", "正在连接 Kaggle 节点", 0f))
+        // Android 14+（API 34）起 startForeground 必须声明类型，
+        // 否则系统抛 MissingForegroundServiceTypeException 直接把进程杀掉，
+        // 现象就是「点了连接，两三秒后自己关了」。
+        val notif = buildNotification("预热中…", "正在连接节点", 0f)
+        if (Build.VERSION.SDK_INT >= 34) {
+            startForeground(NOTIF_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        } else {
+            startForeground(NOTIF_ID, notif)
+        }
 
         scope.launch {
             try {
@@ -70,14 +80,35 @@ class CcmVpnService : VpnService() {
                     broadcastState("失败", "SOCKS5 没有就绪")
                     stopVpn(); return@launch
                 }
-                broadcastState("预热", "SOCKS5 就绪，建立 TUN")
+                broadcastState("预热", "SOCKS5 就绪")
+
+                if (ModeStore.mode(this@CcmVpnService) == Mode.PORT) {
+                    // 端口模式：不建 TUN，起一个本地 SOCKS5 让别的应用连过来
+                    val p = ModeStore.port(this@CcmVpnService)
+                    val ls = LocalSocks(p)
+                    if (!ls.start()) {
+                        broadcastState("失败", "端口 $p 起不来")
+                        stopVpn(); return@launch
+                    }
+                    localSocks = ls
+                    broadcastState("已连接", "代理已开 127.0.0.1:$p")
+                    updateNotification("已连接", "SOCKS5 127.0.0.1:$p", 0f)
+                    monitor(portMode = true)
+                    return@launch
+                }
 
                 if (!establishTun()) {
                     broadcastState("失败", "TUN 建立失败")
                     stopVpn(); return@launch
                 }
 
-                broadcastState("已连接", "流量已接管")
+                val m = ModeStore.mode(this@CcmVpnService)
+                val label = when (m) {
+                    Mode.GLOBAL -> "全局 · 流量已接管"
+                    Mode.APPS -> "分应用 · 已接管 ${(ModeStore.apps(this@CcmVpnService) ?: emptySet()).size} 个应用"
+                    else -> "已接管"
+                }
+                broadcastState("已连接", label)
                 updateNotification("已连接", "$host", 0f)
                 monitor()
             } catch (e: Exception) {
@@ -85,6 +116,18 @@ class CcmVpnService : VpnService() {
                 broadcastState("失败", e.message ?: "未知错误")
                 stopVpn()
             }
+        }
+    }
+
+    /** 装了的所有带启动图标的第三方应用 —— 分应用模式第一次进来时全部勾上 */
+    private fun installedPackages(): Set<String> {
+        return try {
+            packageManager.getInstalledApplications(0)
+                .filter { (it.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) == 0 }
+                .map { it.packageName }
+                .toSet()
+        } catch (_: Exception) {
+            emptySet()
         }
     }
 
@@ -126,15 +169,39 @@ class CcmVpnService : VpnService() {
     }
 
     private fun establishTun(): Boolean {
+        val mode = ModeStore.mode(this)
         val b = Builder()
             .setSession("CCMVPN")
             .setMtu(1500)
             .addAddress("10.8.0.2", 32)
-            .addRoute("0.0.0.0", 0)
             .addDnsServer("10.8.0.1")     // 交给 hev 自己处理，别设公网 DNS 否则解析绕不出去
             .setBlocking(true)
+
+        when (mode) {
+            // 整机：所有流量都走隧道
+            Mode.GLOBAL -> b.addRoute("0.0.0.0", 0)
+
+            // 分应用：默认全勾，只把勾选的应用放进来。
+            // addAllowedApplication 之后未列出的应用自动直连；
+            // 一个都没勾的时候退化成「全都不走」，所以底下做兜底。
+            Mode.APPS -> {
+                val picked = ModeStore.apps(this) ?: installedPackages()
+                if (picked.isEmpty()) b.addRoute("0.0.0.0", 0)
+                else picked.forEach { pkg ->
+                    try { b.addAllowedApplication(pkg) } catch (_: Exception) {}
+                }
+                b.addRoute("0.0.0.0", 0)
+            }
+
+            // 端口模式：只截目标端口是 port 的连接。
+            // Android 的 VpnService 不支持按端口分流，只能靠 hev 自己判断，
+            // 所以这里路由照旧全给，真正生效的是下面 hev 配置里的 proxy 端口白名单。
+            Mode.PORT -> b.addRoute("0.0.0.0", 0)
+        }
+
         // 本 App 自己的流量必须绕开隧道，否则 cloudflared 走隧道会成环
         try { b.addDisallowedApplication(packageName) } catch (_: Exception) {}
+
         val pfd = b.establish() ?: return false
         tunnel = pfd
 
@@ -167,7 +234,7 @@ class CcmVpnService : VpnService() {
     }
 
     /** 每 2 秒看一次，把速率推给通知栏 */
-    private suspend fun monitor() {
+    private suspend fun monitor(portMode: Boolean = false) {
         var prevRx = 0L
         var prevTx = 0L
         var prevT = System.currentTimeMillis()
