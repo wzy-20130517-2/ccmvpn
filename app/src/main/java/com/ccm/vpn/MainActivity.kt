@@ -85,6 +85,7 @@ class MainActivity : ComponentActivity() {
         val warming = state == "预热"
 
         // 模式：连上后就不让改（改了也不生效，避免界面和实际不一致）
+        var showPicker by remember { mutableStateOf(false) }
         var mode by remember { mutableStateOf(ModeStore.mode(ctx)) }
         var portText by remember { mutableStateOf(ModeStore.port(ctx).toString()) }
         fun saveMode(m: Mode) {
@@ -115,6 +116,11 @@ class MainActivity : ComponentActivity() {
             ip = r?.first
             loc = r?.second
             ipLoading = false
+        }
+
+        if (showPicker) {
+            AppPickerScreen(ctx) { showPicker = false }
+            return
         }
 
         Box(
@@ -175,6 +181,7 @@ class MainActivity : ComponentActivity() {
 
                 Spacer(Modifier.height(20.dp))
                 ModeSelector(
+                    ctx = ctx,
                     mode = mode,
                     enabled = !on && !warming,
                     portText = portText,
@@ -182,7 +189,8 @@ class MainActivity : ComponentActivity() {
                     onPort = { t ->
                         portText = t.filter { c -> c.isDigit() }.take(5)
                         portText.toIntOrNull()?.let { if (it in 1..65535) ModeStore.setPort(ctx, it) }
-                    }
+                    },
+                    onOpenPicker = { showPicker = true }
                 )
 
                 Spacer(Modifier.weight(1f))
@@ -243,8 +251,10 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun ModeSelector(
+        ctx: android.content.Context,
         mode: Mode, enabled: Boolean, portText: String,
-        onMode: (Mode) -> Unit, onPort: (String) -> Unit
+        onMode: (Mode) -> Unit, onPort: (String) -> Unit,
+        onOpenPicker: () -> Unit
     ) {
         Column(Modifier.fillMaxWidth()) {
             Row(
@@ -285,14 +295,22 @@ class MainActivity : ComponentActivity() {
             }
             if (mode == Mode.APPS) {
                 Spacer(Modifier.height(8.dp))
-                Text("已选 ${(ModeStore.apps(ctx) ?: emptySet()).size} 个应用，点这里调整",
-                    fontSize = 12.sp, color = Color(0xFF60A5FA))
+                Surface(
+                    onClick = { if (enabled) onOpenPicker() },
+                    enabled = enabled,
+                    color = Color.Transparent
+                ) {
+                    Text(
+                        "已选 ${(ModeStore.apps(ctx) ?: emptySet()).size} 个应用，点这里调整 ›",
+                        fontSize = 12.sp, color = Color(0xFF60A5FA)
+                    )
+                }
             }
         }
     }
 
     @Composable
-    private fun ModeChip(label: String, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    private fun RowScope.ModeChip(label: String, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
         Surface(
             shape = RoundedCornerShape(12.dp),
             color = if (selected) Color(0xFF4ADE80).copy(alpha = 0.18f)
