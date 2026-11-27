@@ -106,7 +106,7 @@ class CcmVpnService : VpnService() {
             .redirectErrorStream(true)
             .redirectOutput(File(filesDir, "cloudflared.log"))
             .start()
-        Log.i(TAG, "cloudflared pid=${cfProc?.pid()}")
+        Log.i(TAG, "cloudflared started: ${cmd.joinToString(" ")}")
     }
 
     /** 一直试到 1080 能连上，或者超时 */
