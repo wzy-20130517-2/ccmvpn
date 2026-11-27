@@ -404,13 +404,15 @@ private suspend fun fetchIpInfo(proxyPort: Int? = null): Pair<String, String>? =
     try {
         // 先在 URLConnection 上调 setProxy（Kotlin 把 setProxy 当 URLConnection 的方法，
         // 先 as HttpURLConnection 的话编译器就找不到了），再赋给 HttpURLConnection 用。
-        // Kotlin 里 URLConnection 的代理是属性，不是 setProxy()（那个是 protected）
-        val uc = URL("https://ipinfo.io/json").openConnection()
-        if (proxyPort != null) {
-            uc.proxy = java.net.Proxy(java.net.Proxy.Type.SOCKS,
-                java.net.InetSocketAddress("127.0.0.1", proxyPort))
+        // 代理必须在 openConnection(proxy) 时指定 ——
+        // URLConnection 的 setProxy/proxy 都是 protected，外部调不到。
+        val url = URL("https://ipinfo.io/json")
+        val c = if (proxyPort != null) {
+            url.openConnection(java.net.Proxy(java.net.Proxy.Type.SOCKS,
+                java.net.InetSocketAddress("127.0.0.1", proxyPort))) as HttpURLConnection
+        } else {
+            url.openConnection() as HttpURLConnection
         }
-        val c = uc as HttpURLConnection
         c.connectTimeout = 8000
         c.readTimeout = 8000
         val body = c.inputStream.bufferedReader().readText()
