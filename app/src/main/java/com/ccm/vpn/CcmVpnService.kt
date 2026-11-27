@@ -156,11 +156,10 @@ class CcmVpnService : VpnService() {
             """.trimIndent()
         )
         return try {
-            val ok = hev.htproxy.TProxyService.TProxyStartService(
-                cfg.absolutePath, pfd.fd
-            )
-            Log.i(TAG, "tun2socks start=$ok")
-            ok
+            // 返回类型是 void，起没起来只能靠后面的连通性判断
+            org.amnezia.awg.hevtunnel.TProxyService.TProxyStartService(cfg.absolutePath, pfd.fd)
+            Log.i(TAG, "tun2socks started")
+            true
         } catch (e: Throwable) {
             Log.e(TAG, "tun2socks 起不来", e)
             false
@@ -205,7 +204,7 @@ class CcmVpnService : VpnService() {
 
     private fun stopVpn() {
         running = false
-        try { hev.htproxy.TProxyService.TProxyStopService() } catch (_: Exception) {}
+        try { org.amnezia.awg.hevtunnel.TProxyService.TProxyStopService() } catch (_: Exception) {}
         tunnel = null
         try { cfProc?.destroy() } catch (_: Exception) {}
         cfProc = null

@@ -56,3 +56,12 @@ dependencies {
     implementation("com.zaneschepke:hevtunnel:1.0.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 }
+
+// hev 那个 AAR 会把 core-ktx 传递提升到 1.17.0，而 1.17 要求 compileSdk 36 + AGP 8.9+。
+// 我们跟 ccm-android 保持一致用 35 / 8.7.3，所以把 core-ktx 钉在 1.13.1。
+configurations.all {
+    resolutionStrategy {
+        force("androidx.core:core:1.13.1")
+        force("androidx.core:core-ktx:1.13.1")
+    }
+}
