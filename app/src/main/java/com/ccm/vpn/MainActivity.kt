@@ -112,11 +112,14 @@ class MainActivity : ComponentActivity() {
         var refreshTick by remember { mutableStateOf(0) }
         LaunchedEffect(on, refreshTick) {
             ipLoading = true
-            // 全局/分应用模式：VpnService 已接管，直接发请求就是走隧道，
-            // 不需要额外代理（设了反而会因为 App 被 disallow 而绕不出去）。
-            // 端口模式：VpnService 没建，本机 socks 监听的是自定义端口，
-            // 必须显式走它才不会退回本机出口。
-            val proxy = if (on && ModeStore.mode(ctx) == Mode.PORT) ModeStore.port(ctx) else null
+            // App 自己被 addDisallowedApplication 排除了，所以无论哪种模式，
+            // 本进程的请求都是直连 —— 不显式走代理就查到本机宽带 IP（景德镇），
+            // 和用户实际走的流量对不上。
+            // 全局/分应用：cloudflared 在本机 1080 上，走它 = 走隧道。
+            // 端口模式：本机 SOCKS 监听的是用户自定端口。
+            val proxy = if (!on) null
+                        else if (ModeStore.mode(ctx) == Mode.PORT) ModeStore.port(ctx)
+                        else 1080
             val r = fetchIpInfo(proxy)
             ip = r?.first
             loc = r?.second

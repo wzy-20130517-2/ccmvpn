@@ -175,7 +175,7 @@ class CcmVpnService : VpnService() {
         val mode = ModeStore.mode(this)
         val b = Builder()
             .setSession("CCMVPN")
-            .setMtu(1500)
+            .setMtu(1400)
             .addAddress(HEV_TUN_ADDR, 32)
             // DNS 必须走公共服务器：hev 会把发往它的 UDP 请求
             // 通过 SOCKS5 的 UDP 转发出去（配置里 socks5.udp: 'udp'）。
@@ -228,7 +228,7 @@ class CcmVpnService : VpnService() {
         cfg.writeText(
             """
             tunnel:
-              mtu: 1500
+              mtu: 1400
               ipv4: $tunAddr
             socks5:
               port: 1080
