@@ -245,7 +245,9 @@ class CcmVpnService : VpnService() {
               # 高延迟链路上吞吐被这个死死卡住 —— 这就是速度上不去的直接原因之一。
               tcp-buffer-size: 65536
               task-stack-size: 86016
-              max-session-count: 1200
+              # 每个会话要占一份 64KB buffer，1200 会话 = 73MB。
+              # 手机上给 256 够用（浏览器并发也就几十），省内存给系统。
+              max-session-count: 256
               connect-timeout: 15000
               log-level: warn
               log-file: ${File(filesDir, "hev.log").absolutePath}
