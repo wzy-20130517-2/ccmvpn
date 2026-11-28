@@ -234,9 +234,19 @@ class CcmVpnService : VpnService() {
               port: 1080
               address: 127.0.0.1
               udp: 'udp'
+              # pipeline：SOCKS5 握手不发包等回复，一路写到底，
+              # 省掉一次往返。这条链路上一个往返就是几百毫秒，效果明显。
+              pipeline: true
+              # fastopen 在隧道上没意义（TCP 不是直达），关掉
+              tcp-fastopen: false
             misc:
+              # 官方口径：task-stack-size = 20480 + tcp-buffer-size。
+              # tcp-buffer-size 默认只有 4096，一次性只能塞 4KB，
+              # 高延迟链路上吞吐被这个死死卡住 —— 这就是速度上不去的直接原因之一。
+              tcp-buffer-size: 65536
               task-stack-size: 86016
-              connect-timeout: 12000
+              max-session-count: 1200
+              connect-timeout: 15000
               log-level: warn
               log-file: ${File(filesDir, "hev.log").absolutePath}
             """.trimIndent()
